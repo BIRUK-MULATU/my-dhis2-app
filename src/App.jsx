@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useDataMutation } from '@dhis2/app-runtime'
 import {
     Button,
@@ -18,12 +18,12 @@ import classes from './App.module.css'
 import './locales'
 import { v4 as uuidv4 } from 'uuid' // for unique keys
 
-// DHIS2 Data Store mutation
-const createAttendantMutation = {
-    resource: ({ key }) => `dataStore/trainingAttendants/${key}`,
+// DHIS2 DataStore mutation as a function
+const createAttendantMutation = (key, attendant) => ({
+    resource: `dataStore/trainingAttendants/${key}`,
     type: 'create',
-    data: ({ attendant }) => attendant,
-}
+    data: attendant,
+})
 
 const MyApp = () => {
     const [attendant, setAttendant] = useState({
@@ -37,6 +37,17 @@ const MyApp = () => {
     const [attendants, setAttendants] = useState([])
     const [mutate, { loading, error }] = useDataMutation(createAttendantMutation)
 
+    // Load attendants from localStorage on mount
+    useEffect(() => {
+        const data = localStorage.getItem('attendants')
+        if (data) setAttendants(JSON.parse(data))
+    }, [])
+
+    // Save attendants to localStorage
+    const saveAttendantsToJson = (attendantsArray) => {
+        localStorage.setItem('attendants', JSON.stringify(attendantsArray))
+    }
+
     const handleChange = (field, value) => {
         setAttendant({ ...attendant, [field]: value })
     }
@@ -44,9 +55,20 @@ const MyApp = () => {
     const handleSubmit = async (e) => {
         e.preventDefault()
         try {
-            const key = uuidv4() // unique key for each record
-            await mutate({ attendant, key }) // submit to DHIS2
-            setAttendants([...attendants, attendant]) // add to local table
+            // Generate unique ID and short code
+            const key = uuidv4()
+            const code = key.slice(0, 8).toUpperCase()
+            const newAttendant = { ...attendant, code }
+
+            // Submit to DHIS2 DataStore
+            await mutate(createAttendantMutation(key, newAttendant))
+
+            // Update local state and localStorage
+            const updatedAttendants = [...attendants, newAttendant]
+            setAttendants(updatedAttendants)
+            saveAttendantsToJson(updatedAttendants)
+
+            // Reset form
             setAttendant({
                 firstName: '',
                 lastName: '',
@@ -55,8 +77,10 @@ const MyApp = () => {
                 organizationUnit: '',
                 trainingDate: '',
             })
+
+            console.log('Attendant added:', newAttendant)
         } catch (err) {
-            console.error(err)
+            console.error('Error submitting attendant:', err)
         }
     }
 
@@ -125,7 +149,7 @@ const MyApp = () => {
                 <DataTable scrollHeight="300px">
                     <TableHead>
                         <DataTableRow>
-                            <DataTableColumnHeader />
+                            <DataTableColumnHeader>Code</DataTableColumnHeader>
                             <DataTableColumnHeader>First Name</DataTableColumnHeader>
                             <DataTableColumnHeader>Last Name</DataTableColumnHeader>
                             <DataTableColumnHeader>Age</DataTableColumnHeader>
@@ -135,17 +159,17 @@ const MyApp = () => {
                         </DataTableRow>
                     </TableHead>
                     <TableBody>
-                        {attendants.map((a, index) => (
+                        {attendants.map((a) => (
                             <DataTableRow
-                                key={index}
+                                key={a.code}
                                 expandableContent={
                                     <div style={{ backgroundColor: 'lightblue', margin: 8, padding: 4 }}>
-                                        {a.firstName} {a.lastName}, {a.age} years old, {a.gender}, from {a.organizationUnit}, training on {a.trainingDate}
+                                        {a.code} - {a.firstName} {a.lastName}, {a.age} years old, {a.gender}, from {a.organizationUnit}, training on {a.trainingDate}
                                     </div>
                                 }
                                 onExpandToggle={() => {}}
                             >
-                                <DataTableCell />
+                                <DataTableCell>{a.code}</DataTableCell>
                                 <DataTableCell>{a.firstName}</DataTableCell>
                                 <DataTableCell>{a.lastName}</DataTableCell>
                                 <DataTableCell>{a.age}</DataTableCell>
