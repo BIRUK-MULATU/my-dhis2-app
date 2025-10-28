@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useDataMutation } from '@dhis2/app-runtime'
+import { useDataMutation, useDataQuery } from '@dhis2/app-runtime'
 import {
     Button,
     InputField,
@@ -11,22 +11,28 @@ import {
     DataTableColumnHeader,
     TableHead,
     TableBody,
-    NoticeBox
+    NoticeBox,
 } from '@dhis2/ui'
-import i18n from '@dhis2/d2-i18n'
-import classes from './App.module.css'
-import './locales'
-import { v4 as uuidv4 } from 'uuid' // for unique keys
 
-// DHIS2 DataStore mutation as a function
-const createAttendantMutation = (key, attendant) => ({
-    resource: `dataStore/trainingAttendants/${key}`,
-    type: 'create',
-    data: attendant,
-})
+// ✅ Mutation to save attendant to DHIS2 dataStore
+const createAttendantMutation = {
+    resource: 'dataStore/trainingAttendants',
+    type: 'update',
+    id: ({ id }) => id,
+    data: ({ data }) => data,
+}
 
-const MyApp = () => {
-    const [attendant, setAttendant] = useState({
+// ✅ Query to generate DHIS2 ID
+const generateIdQuery = {
+    id: {
+        resource: 'system/id',
+        params: { limit: 1 },
+    },
+}
+
+export default function App() {
+    const [attendants, setAttendants] = useState([])
+    const [form, setForm] = useState({
         firstName: '',
         lastName: '',
         age: '',
@@ -34,42 +40,36 @@ const MyApp = () => {
         organizationUnit: '',
         trainingDate: '',
     })
-    const [attendants, setAttendants] = useState([])
-    const [mutate, { loading, error }] = useDataMutation(createAttendantMutation)
 
-    // Load attendants from localStorage on mount
+    const [mutate, { error, loading }] = useDataMutation(createAttendantMutation)
+    const { refetch: generateId } = useDataQuery(generateIdQuery, { lazy: true })
+
     useEffect(() => {
-        const data = localStorage.getItem('attendants')
-        if (data) setAttendants(JSON.parse(data))
+        const stored = JSON.parse(localStorage.getItem('attendants')) || []
+        setAttendants(stored)
     }, [])
 
-    // Save attendants to localStorage
-    const saveAttendantsToJson = (attendantsArray) => {
-        localStorage.setItem('attendants', JSON.stringify(attendantsArray))
+    const handleChange = ({ name, value }) => {
+        setForm(prev => ({ ...prev, [name]: value }))
     }
 
-    const handleChange = (field, value) => {
-        setAttendant({ ...attendant, [field]: value })
-    }
-
-    const handleSubmit = async (e) => {
+    const handleSubmit = async e => {
         e.preventDefault()
+
         try {
-            // Generate unique ID and short code
-            const key = uuidv4()
-            const code = key.slice(0, 8).toUpperCase()
-            const newAttendant = { ...attendant, code }
+            // ✅ Get DHIS2-generated ID
+            const { id } = await generateId()
+            const newId = id.codes[0]
 
-            // Submit to DHIS2 DataStore
-            await mutate(createAttendantMutation(key, newAttendant))
+            const newAttendant = { ...form, id: newId }
 
-            // Update local state and localStorage
-            const updatedAttendants = [...attendants, newAttendant]
-            setAttendants(updatedAttendants)
-            saveAttendantsToJson(updatedAttendants)
+            await mutate({ id: newId, data: newAttendant })
 
-            // Reset form
-            setAttendant({
+            const updated = [...attendants, newAttendant]
+            setAttendants(updated)
+            localStorage.setItem('attendants', JSON.stringify(updated))
+
+            setForm({
                 firstName: '',
                 lastName: '',
                 age: '',
@@ -77,16 +77,15 @@ const MyApp = () => {
                 organizationUnit: '',
                 trainingDate: '',
             })
-
-            console.log('Attendant added:', newAttendant)
+            console.log('✅ Successfully submitted with DHIS2 ID:', newAttendant)
         } catch (err) {
-            console.error('Error submitting attendant:', err)
+            console.error('❌ Error submitting attendant:', err)
         }
     }
 
     return (
-        <div className={classes.container}>
-            <h1>{i18n.t('Training Attendant Registration Form')}</h1>
+        <div style={{ padding: 20 }}>
+            <h2>Training Attendant Registration Form</h2>
 
             {error && (
                 <NoticeBox error title="Error submitting form">
@@ -94,95 +93,63 @@ const MyApp = () => {
                 </NoticeBox>
             )}
 
-            <form onSubmit={handleSubmit} style={{ marginBottom: 20 }}>
-                <div className={classes.formRow}>
-                    <InputField
-                        label="First Name"
-                        value={attendant.firstName}
-                        onChange={(e) => handleChange('firstName', e.value)}
-                        required
-                    />
-                    <InputField
-                        label="Last Name"
-                        value={attendant.lastName}
-                        onChange={(e) => handleChange('lastName', e.value)}
-                        required
-                    />
-                    <InputField
-                        label="Age"
-                        type="number"
-                        value={attendant.age}
-                        onChange={(e) => handleChange('age', e.value)}
-                        required
-                    />
-                    <SingleSelect
-                        label="Gender"
-                        selected={attendant.gender}
-                        onChange={(e) => handleChange('gender', e.selected)}
-                    >
-                        <SingleSelectOption label="Select Gender" value="" />
-                        <SingleSelectOption label="Male" value="Male" />
-                        <SingleSelectOption label="Female" value="Female" />
-                        <SingleSelectOption label="Other" value="Other" />
-                    </SingleSelect>
-                    <InputField
-                        label="Organization Unit"
-                        value={attendant.organizationUnit}
-                        onChange={(e) => handleChange('organizationUnit', e.value)}
-                        required
-                    />
-                    <InputField
-                        label="Training Date"
-                        type="date"
-                        value={attendant.trainingDate}
-                        onChange={(e) => handleChange('trainingDate', e.value)}
-                        required
-                    />
-                </div>
+            <form onSubmit={handleSubmit}>
+                <InputField name="firstName" label="First Name" value={form.firstName} onChange={handleChange} required />
+                <InputField name="lastName" label="Last Name" value={form.lastName} onChange={handleChange} required />
+                <InputField name="age" label="Age" type="number" value={form.age} onChange={handleChange} />
+                <SingleSelect
+                    name="gender"
+                    label="Gender"
+                    selected={form.gender}
+                    onChange={({ selected }) => handleChange({ name: 'gender', value: selected })}
+                >
+                    <SingleSelectOption label="Male" value="Male" />
+                    <SingleSelectOption label="Female" value="Female" />
+                </SingleSelect>
+                <InputField
+                    name="organizationUnit"
+                    label="Organization Unit"
+                    value={form.organizationUnit}
+                    onChange={handleChange}
+                />
+                <InputField
+                    name="trainingDate"
+                    label="Training Date"
+                    type="date"
+                    value={form.trainingDate}
+                    onChange={handleChange}
+                />
 
                 <Button type="submit" primary disabled={loading}>
-                    {loading ? 'Submitting...' : 'Register Attendant'}
+                    {loading ? 'Submitting...' : 'Submit'}
                 </Button>
             </form>
 
-            {attendants.length > 0 && (
-                <DataTable scrollHeight="300px">
-                    <TableHead>
-                        <DataTableRow>
-                            <DataTableColumnHeader>Code</DataTableColumnHeader>
-                            <DataTableColumnHeader>First Name</DataTableColumnHeader>
-                            <DataTableColumnHeader>Last Name</DataTableColumnHeader>
-                            <DataTableColumnHeader>Age</DataTableColumnHeader>
-                            <DataTableColumnHeader>Gender</DataTableColumnHeader>
-                            <DataTableColumnHeader>Organization Unit</DataTableColumnHeader>
-                            <DataTableColumnHeader>Training Date</DataTableColumnHeader>
+            <h3 style={{ marginTop: 30 }}>Registered Attendants</h3>
+            <DataTable>
+                <TableHead>
+                    <DataTableRow>
+                        <DataTableColumnHeader>First Name</DataTableColumnHeader>
+                        <DataTableColumnHeader>Last Name</DataTableColumnHeader>
+                        <DataTableColumnHeader>Age</DataTableColumnHeader>
+                        <DataTableColumnHeader>Gender</DataTableColumnHeader>
+                        <DataTableColumnHeader>Organization Unit</DataTableColumnHeader>
+                        <DataTableColumnHeader>Training Date</DataTableColumnHeader>
+                    </DataTableRow>
+                </TableHead>
+                <TableBody>
+                    {attendants.map(a => (
+                        <DataTableRow key={a.id}>
+                            <DataTableCell>{a.firstName}</DataTableCell>
+                            <DataTableCell>{a.lastName}</DataTableCell>
+                            <DataTableCell>{a.age}</DataTableCell>
+                            <DataTableCell>{a.gender}</DataTableCell>
+                            <DataTableCell>{a.organizationUnit}</DataTableCell>
+                            <DataTableCell>{a.trainingDate}</DataTableCell>
                         </DataTableRow>
-                    </TableHead>
-                    <TableBody>
-                        {attendants.map((a) => (
-                            <DataTableRow
-                                key={a.code}
-                                expandableContent={
-                                    <div style={{ backgroundColor: 'lightblue', margin: 8, padding: 4 }}>
-                                        {a.code} - {a.firstName} {a.lastName}, {a.age} years old, {a.gender}, from {a.organizationUnit}, training on {a.trainingDate}
-                                    </div>
-                                }
-                                onExpandToggle={() => {}}
-                            >
-                                <DataTableCell>{a.code}</DataTableCell>
-                                <DataTableCell>{a.firstName}</DataTableCell>
-                                <DataTableCell>{a.lastName}</DataTableCell>
-                                <DataTableCell>{a.age}</DataTableCell>
-                                <DataTableCell>{a.gender}</DataTableCell>
-                                <DataTableCell>{a.organizationUnit}</DataTableCell>
-                                <DataTableCell>{a.trainingDate}</DataTableCell>
-                            </DataTableRow>
-                        ))}
-                    </TableBody>
-                </DataTable>
-            )}
+                    ))}
+                </TableBody>
+            </DataTable>
         </div>
     )
 }
-
-export default MyApp
